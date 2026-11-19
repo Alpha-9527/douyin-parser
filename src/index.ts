@@ -209,7 +209,7 @@ async function handleProxy(request: Request, url: URL): Promise<Response> {
 function handleHealth(): Response {
   return successResponse({
     status: 'healthy',
-    service: 'douyin-video-parser',
+    service: 'douyin-parser',
     version: '1.0.0',
   });
 }
