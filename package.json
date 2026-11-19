@@ -1,5 +1,5 @@
 {
-  "name": "douyin-video-parser",
+  "name": "douyin-parser",
   "version": "1.0.0",
   "description": "抖音视频解析后端接口，部署在 Cloudflare Workers 上",
   "main": "src/index.ts",
