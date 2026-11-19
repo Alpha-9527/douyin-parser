@@ -27,7 +27,7 @@ export default {
       case '/api/parse':
         return handleParse(request, url);
       case '/api/proxy':
-        return handleProxy(url);
+        return handleProxy(request, url);
       case '/api/health':
         return handleHealth();
       default:
