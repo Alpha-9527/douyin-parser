@@ -86,34 +86,119 @@ async function handleParse(request: Request, url: URL): Promise<Response> {
  * @param url - 解析后的 URL 对象
  * @returns 视频流响应
  */
-async function handleProxy(url: URL): Promise<Response> {
+
+/**
+ * 视频流代理：仅允许经过验证的抖音视频 CDN 域名
+ */
+async function handleProxy(request: Request, url: URL): Promise<Response> {
   const targetUrl = url.searchParams.get('url');
+
   if (!targetUrl) {
     return errorResponse('缺少必要参数: url', 400);
   }
 
-  try {
-    const response = await fetch(targetUrl, {
-      headers: {
-        'Referer': 'https://www.douyin.com/',
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15',
-      },
-    });
+  // 仅允许 HTTPS 和指定的视频 CDN 域名
+  const allowedHosts = [
+    'douyinvod.com',
+    'bytecdn.cn',
+    'bytecdn.com',
+  ];
 
-    const headers = new Headers();
-    const copyHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control', 'etag', 'last-modified'];
-    for (const h of copyHeaders) {
-      const v = response.headers.get(h);
-      if (v) headers.set(h, v);
+  function isAllowedUrl(value: string): boolean {
+    try {
+      const parsed = new URL(value);
+      return (
+        parsed.protocol === 'https:' &&
+        !parsed.username &&
+        !parsed.password &&
+        allowedHosts.some(
+          host =>
+            parsed.hostname === host ||
+            parsed.hostname.endsWith('.' + host)
+        )
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  if (!isAllowedUrl(targetUrl)) {
+    return errorResponse('不允许代理此域名', 403);
+  }
+
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return errorResponse('仅支持 GET 和 HEAD 请求', 405);
+  }
+
+  try {
+    let currentUrl = targetUrl;
+    let response: Response | null = null;
+
+    // 手动跟踪重定向，每一跳都重新验证域名
+    for (let i = 0; i < 5; i++) {
+      response = await fetch(currentUrl, {
+        method: request.method,
+        headers: {
+          Referer: 'https://www.douyin.com/',
+          'User-Agent':
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15',
+          ...(request.headers.has('Range')
+            ? { Range: request.headers.get('Range')! }
+            : {}),
+        },
+        redirect: 'manual',
+      });
+
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get('location');
+
+        if (!location) {
+          return errorResponse('CDN 重定向地址缺失', 502);
+        }
+
+        currentUrl = new URL(location, currentUrl).href;
+
+        if (!isAllowedUrl(currentUrl)) {
+          return errorResponse('CDN 重定向目标不在允许范围内', 403);
+        }
+
+        continue;
+      }
+
+      break;
     }
 
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
-  } catch (e) {
-    return errorResponse('代理视频流失败: ' + (e instanceof Error ? e.message : String(e)), 500);
+    if (!response || [301, 302, 303, 307, 308].includes(response.status)) {
+      return errorResponse('CDN 重定向次数超限', 502);
+    }
+
+    const headers = new Headers();
+    const copyHeaders = [
+      'content-type',
+      'content-length',
+      'content-range',
+      'accept-ranges',
+      'cache-control',
+      'etag',
+      'last-modified',
+    ];
+
+    for (const h of copyHeaders) {
+      const value = response.headers.get(h);
+      if (value) headers.set(h, value);
+    }
+
+    headers.set('X-Content-Type-Options', 'nosniff');
+
+    return new Response(
+      request.method === 'HEAD' ? null : response.body,
+      {
+        status: response.status,
+        headers,
+      }
+    );
+  } catch {
+    return errorResponse('代理视频流失败', 502);
   }
 }
 
